@@ -1,0 +1,288 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum ChallengeStatus {
+  OPEN
+  ACCEPTED
+  CANCELLED
+  EXPIRED
+}
+
+enum MatchStatus {
+  OPEN
+  ACCEPTED
+  READY
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXPIRED
+  DISPUTED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum LedgerTransactionType {
+  CREDIT_GRANT
+  MATCH_STAKE_RESERVE
+  MATCH_STAKE_RELEASE
+  MATCH_WIN_SETTLEMENT
+  MATCH_DRAW_REFUND
+  ADMIN_ADJUSTMENT
+  SEASON_REWARD
+}
+
+enum MatchOutcome {
+  WINNER_PLAYER_1
+  WINNER_PLAYER_2
+  DRAW
+  CANCELLED
+  CHEAT_FLAG
+  DISCONNECT_FORFEIT_PLAYER_1
+  DISCONNECT_FORFEIT_PLAYER_2
+}
+
+model User {
+  id                String      @id @default(cuid())
+  email             String      @unique
+  username          String      @unique
+  passwordHash      String
+  displayName       String
+  avatarUrl         String?
+  bio               String?
+  minecraftUuid     String?     @unique
+  minecraftUsername String?
+  eloRating         Int         @default(1000)
+  wins              Int         @default(0)
+  losses            Int         @default(0)
+  draws             Int         @default(0)
+  banned            Boolean     @default(false)
+  role              UserRole    @default(USER)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  wallet            Wallet?
+  ledgerEntries     LedgerEntry[]
+  challenges        Challenge[] @relation("ChallengeCreator")
+  invites           Challenge[] @relation("ChallengeInvite")
+  participant       MatchParticipant[]
+  disputesRaised    Dispute[]   @relation("DisputeRaisedBy")
+  disputesResolved  Dispute[]   @relation("DisputeResolvedBy")
+  moderatorNotes    ModeratorNote[]
+  accountLinks      AccountLink[]
+  bans              Ban[]       @relation("BanSubject")
+  issuedBans        Ban[]       @relation("BanIssuer")
+}
+
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model LedgerEntry {
+  id                 String                @id @default(cuid())
+  transactionGroupId String
+  userId             String
+  user               User                  @relation(fields: [userId], references: [id])
+  amount             Int
+  direction          LedgerDirection
+  type               LedgerTransactionType
+  referenceType      String
+  referenceId        String
+  metadata           Json?
+  createdAt          DateTime              @default(now())
+
+  @@index([userId, createdAt])
+  @@index([transactionGroupId])
+}
+
+model Season {
+  id          String   @id @default(cuid())
+  name        String
+  startsAt    DateTime
+  endsAt      DateTime?
+  active      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  matches     Match[]
+}
+
+model Arena {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  challenges Challenge[]
+  matches    Match[]
+}
+
+model DuelType {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  challenges Challenge[]
+  matches    Match[]
+}
+
+model Challenge {
+  id            String          @id @default(cuid())
+  challengerId  String
+  challenger    User            @relation("ChallengeCreator", fields: [challengerId], references: [id])
+  invitedUserId String?
+  invitedUser   User?           @relation("ChallengeInvite", fields: [invitedUserId], references: [id])
+  stake         Int
+  duelTypeId    String
+  duelType      DuelType        @relation(fields: [duelTypeId], references: [id])
+  arenaId       String
+  arena         Arena           @relation(fields: [arenaId], references: [id])
+  status        ChallengeStatus @default(OPEN)
+  notes         String?
+  expiresAt     DateTime
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  match         Match?
+}
+
+model Match {
+  id                 String       @id @default(cuid())
+  challengeId        String?      @unique
+  challenge          Challenge?   @relation(fields: [challengeId], references: [id])
+  serverMatchId      String?      @unique
+  status             MatchStatus  @default(OPEN)
+  outcome            MatchOutcome?
+  duelTypeId         String
+  duelType           DuelType     @relation(fields: [duelTypeId], references: [id])
+  arenaId            String
+  arena              Arena        @relation(fields: [arenaId], references: [id])
+  seasonId           String?
+  season             Season?      @relation(fields: [seasonId], references: [id])
+  stake              Int
+  grimFlagCount      Int          @default(0)
+  suspicious         Boolean      @default(false)
+  staffReviewNotes   String?
+  replayUrl          String?
+  combatLogSummary   String?
+  settledAt          DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  participants       MatchParticipant[]
+  events             MatchEvent[]
+  disputes           Dispute[]
+}
+
+model MatchParticipant {
+  id        String   @id @default(cuid())
+  matchId   String
+  userId    String
+  slot      Int
+  match     Match    @relation(fields: [matchId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([matchId, slot])
+}
+
+model MatchEvent {
+  id        String   @id @default(cuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id])
+  kind      String
+  payload   Json
+  createdAt DateTime @default(now())
+}
+
+model Dispute {
+  id           String       @id @default(cuid())
+  matchId      String
+  match        Match        @relation(fields: [matchId], references: [id])
+  raisedById   String
+  raisedBy     User         @relation("DisputeRaisedBy", fields: [raisedById], references: [id])
+  status       DisputeStatus @default(OPEN)
+  reason       String
+  resolvedById String?
+  resolvedBy   User?        @relation("DisputeResolvedBy", fields: [resolvedById], references: [id])
+  resolvedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  notes        ModeratorNote[]
+}
+
+model ModeratorNote {
+  id          String   @id @default(cuid())
+  disputeId   String
+  dispute     Dispute  @relation(fields: [disputeId], references: [id])
+  moderatorId String
+  moderator   User     @relation(fields: [moderatorId], references: [id])
+  body        String
+  createdAt   DateTime @default(now())
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ApiClient {
+  id        String   @id @default(cuid())
+  name      String
+  key       String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+model ApiAuditLog {
+  id        String   @id @default(cuid())
+  endpoint  String
+  source    String
+  payload   Json
+  statusCode Int
+  createdAt DateTime @default(now())
+}
+
+model AccountLink {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id])
+  linkCode          String   @unique
+  minecraftUuid     String?
+  minecraftUsername String?
+  usedAt            DateTime?
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+}
+
+model Ban {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation("BanSubject", fields: [userId], references: [id])
+  issuedById  String
+  issuedBy    User     @relation("BanIssuer", fields: [issuedById], references: [id])
+  reason      String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+}
